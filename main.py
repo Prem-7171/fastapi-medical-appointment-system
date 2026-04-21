@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
 app = FastAPI()
 
@@ -54,9 +55,39 @@ doctors = [
             }
             ]
 
+# Pydantic model for appointment 
+# Q6
+class AppointmentRequest(BaseModel):
+    patient_name : str = Field(..., min_length=2)
+    doctor_id : int = Field(..., gt=0)
+    date : str =Field(..., min_length=8)
+    reason : str = Field(..., min_length=5)
+    appointment_type : str = Field(default='in-person')
+    
+
 # Appointment Records
 appointments = []
 appt_counter = 1
+
+
+# Helper Functions
+# Q7    
+def find_doctor(doctor_id):
+    for d in doctors:
+        if d['id'] == doctor_id:
+            return d
+    return None
+        
+def calculate_fee(base_fee, appointment_type):
+    if appointment_type == 'video':
+        return int(0.8*base_fee)
+    elif appointment_type == 'in-person':
+        return base_fee
+    elif appointment_type == 'emergency':
+        return int(1.5*base_fee)
+    else:
+        return None
+    
 
 # Q1
 @app.get('/')
@@ -104,3 +135,28 @@ def get_doctor_id(doctor_id : int):
 def get_appointments():
     return {'appointments':appointments, 'total':len(appointments)}
 
+# Q8
+@app.post('/appointments')
+def get_appointment(appointment : AppointmentRequest):
+    global appt_counter
+    doctor = find_doctor(appointment.doctor_id)
+    if not doctor:
+        raise HTTPException( status_code=404, detail="doctor not found")
+    if not doctor['is_available']:
+        raise HTTPException( status_code=400, detail="doctor is not available")
+    
+    fee = calculate_fee(doctor['fee'], appointment.appointment_type)
+    appt = {'appointment_id':appt_counter, 
+            'patient':appointment.patient_name, 
+            'doctor_name':doctor['name'],
+            'reason': appointment.reason,
+            'date':appointment.date,
+            'type':appointment.appointment_type,
+            'calculated_fee': fee,
+            'status':'scheduled'
+            }
+    appointments.append(appt)
+    appt_counter += 1
+    return appt
+    
+    
