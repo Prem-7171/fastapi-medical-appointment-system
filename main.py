@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 app = FastAPI()
@@ -63,8 +63,17 @@ class AppointmentRequest(BaseModel):
     date : str =Field(..., min_length=8)
     reason : str = Field(..., min_length=5)
     appointment_type : str = Field(default='in-person')
+    senior_citizen : bool = Field(default=False)
     
-
+# Pydantic model for new Doctor
+# Q11
+class NewDoctor(BaseModel):
+    name : str = Field(..., min_length=2)
+    specialization : str = Field(..., min_length=2)
+    fee : int = Field(..., gt=0)
+    experience_years : int = Field(..., gt=0)
+    is_available : bool = Field(default=True)
+    
 # Appointment Records
 appointments = []
 appt_counter = 1
@@ -73,21 +82,55 @@ appt_counter = 1
 # Helper Functions
 # Q7    
 def find_doctor(doctor_id):
+    '''Finds a doctor by ID'''
     for d in doctors:
         if d['id'] == doctor_id:
             return d
     return None
         
-def calculate_fee(base_fee, appointment_type):
+def calculate_fee(base_fee, appointment_type, senior_citizen ):
+    
     if appointment_type == 'video':
-        return int(0.8*base_fee)
+        fee = int(0.8*base_fee)
     elif appointment_type == 'in-person':
-        return base_fee
+        fee = base_fee
     elif appointment_type == 'emergency':
-        return int(1.5*base_fee)
+        fee = int(1.5*base_fee)
     else:
         return None
     
+    discounted_fee = fee
+    if senior_citizen:
+        discounted_fee = int(fee - (0.15*fee))
+    
+    return fee, discounted_fee
+    
+# Q10 - Filtering Helper Function
+def filter_doctors_logic(specialization, max_fee, min_experience, is_available):
+    
+    result = doctors.copy()
+   
+    if specialization is not None:
+        result = [d for d in result if d['specialization'].lower() == specialization.lower()]
+       
+    if max_fee is not None:
+        result = [d for d in result if d['fee'] <= max_fee]
+        
+    if min_experience is not None:
+        result = [d for d in result if d['experience_years'] >= min_experience]
+        
+    if is_available is not None:
+        result = [d for d in result if d['is_available'] == is_available]
+        
+    return result
+
+# Finding Appointment Helper function
+def find_appointment(appointment_id):
+    '''Finds an appointment by ID'''
+    for a in appointments:
+        if a['appointment_id'] == appointment_id:
+            return a
+    return None
 
 # Q1
 @app.get('/')
@@ -121,6 +164,19 @@ def get_doctors_summary():
             'specialization': specialization
             }
 
+# Q10
+@app.get('/doctors/filter')
+def filter_doctors(
+    specialization : str = Query(default=None, description="Enter the Specialization of the doctor"),
+    max_fee : int = Query(default=None, description="Enter the maximum fee of the doctor"),
+    min_experience : int = Query(default=None, description="Enter the minimum experience of the doctor"),
+    is_available : bool = Query(default=None, description="Enter the availability of the doctor")
+):
+    
+    result = filter_doctors_logic(specialization, max_fee, min_experience, is_available)
+    
+    return {'doctors': result, 'total': len(result)}
+
 # Q3
 @app.get('/doctors/{doctor_id}')
 def get_doctor_id(doctor_id : int):
@@ -135,7 +191,7 @@ def get_doctor_id(doctor_id : int):
 def get_appointments():
     return {'appointments':appointments, 'total':len(appointments)}
 
-# Q8
+# Q8, Q9
 @app.post('/appointments')
 def get_appointment(appointment : AppointmentRequest):
     global appt_counter
@@ -145,18 +201,121 @@ def get_appointment(appointment : AppointmentRequest):
     if not doctor['is_available']:
         raise HTTPException( status_code=400, detail="doctor is not available")
     
-    fee = calculate_fee(doctor['fee'], appointment.appointment_type)
+    original_fee, discounted_fee = calculate_fee(doctor['fee'], appointment.appointment_type, appointment.senior_citizen)
     appt = {'appointment_id':appt_counter, 
-            'patient':appointment.patient_name, 
+            'patient':appointment.patient_name,
+            'doctor_id': doctor['id'], 
             'doctor_name':doctor['name'],
             'reason': appointment.reason,
             'date':appointment.date,
             'type':appointment.appointment_type,
-            'calculated_fee': fee,
+            'original_fee': original_fee,
+            'discounted_fee' : discounted_fee,
             'status':'scheduled'
             }
     appointments.append(appt)
     appt_counter += 1
     return appt
     
+# Q11 - New Doctor Endpoint
+@app.post('/doctors', status_code= status.HTTP_201_CREATED)
+def add_new_doctor(new_doctor : NewDoctor):
+    for d in doctors:
+        if d['name'].lower() == new_doctor.name.lower():
+            raise HTTPException( status_code= 409, detail="Doctor with this name already exists")
     
+    new_doc = {
+                "id": len(doctors) + 1,
+                "name": new_doctor.name,
+                "specialization": new_doctor.specialization,
+                "fee": new_doctor.fee,
+                "experience_years": new_doctor.experience_years,
+                "is_available": new_doctor.is_available
+    }
+    
+    doctors.append(new_doc)
+    return {'new_doctor': new_doc}
+
+# Q12 -  To update existing doctors Endpoint
+@app.put('/doctors/{doctor_id}') 
+def update_doctor(doctor_id : int,
+                  fee : int = Query(default=None, gt=0),
+                  is_available : bool = Query(default=None)
+                  ):
+    doc = find_doctor(doctor_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    
+    if fee is not None:
+        doc['fee'] = fee
+    if is_available is not None:
+        doc['is_available'] = is_available
+    return {'updated_doctor': doc}
+    
+    
+# Q13 -  To Delete existing doctors with no appointments Endpoint
+@app.delete('/doctors/{doctor_id}') 
+def delete_doctor(doctor_id : int):
+    doc = find_doctor(doctor_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    
+    for appoint in appointments:
+        if appoint['status'] == 'scheduled' and appoint['doctor_name'] == doc['name']:
+            raise HTTPException(status_code=409, detail= "The doctor already has scheduled appointments")
+        
+    doctors.remove(doc)
+    return {'message': 'doctor deleted sucessfully', 'deleted_doctor': doc}
+    
+# Q14 - confirm appointment
+@app.post('/appointments/{appointment_id}/confirm')
+def confirm_appointment(appointment_id: int):
+    appoint = find_appointment(appointment_id)
+    
+    if appoint is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if appoint['status'] == 'cancelled':
+        raise HTTPException(status_code=409, detail= "The appointment has been already cancelled")
+    
+    appoint['status'] = 'confirmed'
+    return {'message':'appointment status confirmed', 'appointment':appoint}
+
+# Q14 - Cancle appointment
+@app.post('/appointments/{appointment_id}/cancel')
+def cancle_appointment(appointment_id: int):
+    appoint = find_appointment(appointment_id)
+    
+    if appoint is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    appoint['status'] = 'cancelled'
+    
+    doc = find_doctor(appoint['doctor_id'])
+    doc['is_available'] = True
+    
+    return {'message':'appointment cancelled', 'appointment':appoint}
+
+# Q15 - Complete appointment
+@app.post('/appointments/{appointment_id}/complete')
+def complete_appointment(appointment_id: int):
+    appoint = find_appointment(appointment_id)
+    
+    if appoint is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if appoint['status'] == 'cancelled':
+        raise HTTPException(status_code=409, detail= "The appointment has been already cancelled")
+    
+    appoint['status'] = 'completed'
+    return {'message':'appointment completed', 'appointment':appoint}
+
+# Q15 - Display Active Appointments
+@app.get('/appointments/active')
+def active_appointments():
+    active_appointments = [a for a in appointments if a['status'] in ['scheduled', 'confirmed']]
+    return {'active_appointments': active_appointments}
+
+# Q15 - Display Appointments by-doctor
+@app.get('/appointments/by-doctor/{doctor_id}')
+def by_doctor_appointments(doctor_id : int):
+     by_doctor_appointments = [a for a in appointments if a['doctor_id'] == doctor_id]
+     return {'total': len(by_doctor_appointments), 'appointments': by_doctor_appointments}
+         
