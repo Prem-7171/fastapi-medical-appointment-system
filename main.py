@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query, status
 from pydantic import BaseModel, Field
+import math
 
 app = FastAPI()
 
@@ -177,8 +178,76 @@ def filter_doctors(
     
     return {'doctors': result, 'total': len(result)}
 
+# Q16 - Searching
+@app.get('/doctors/search')
+def search_doctors(keyword : str = Query(...)):
+    searched = [d for d in doctors if keyword.lower() in d['name'].lower() or keyword.lower() in d['specialization'].lower()]
+    if not searched:
+        raise HTTPException( status_code=404, detail= "no results found on given keyword")
+    return {'total_found': len(searched), 'results':searched}
+
+# Q17 - Sorting
+@app.get('/doctors/sort')
+def sort_by(sort_by : str = Query(default="fee"),
+            order : str = Query(default="asc")):
+    if sort_by not in ['fee', 'name', 'experience_years']:
+        raise HTTPException( status_code=400, detail="sort_by must be one of fee, name and experience_years")
+    reverse = False if order == "asc" else True 
+    sorted_list = sorted(doctors, key = lambda doc : doc[sort_by], reverse=reverse)
+    return {'sort_by':sort_by, 'order':order, 'total':len(sorted_list),'doctors': sorted_list}
+
+# Q18 - Pagination
+@app.get('/doctors/page')
+def paging_doctors(page : int = Query(default=1, gt=0),
+                   limit : int = Query(default=3, gt=0)):
+    total_pages = math.ceil(len(doctors)/limit)
+    if page > total_pages:
+        raise HTTPException(status_code=400, detail="Invalid Page number")
+    start = (page-1)*limit
+    end = start+ limit
+    
+    
+    return {'page':page, 'limit':limit, 'doctors': doctors[start:end], 'total_pages':total_pages, 'total_items':len(doctors )}
+
+# Q20 - Browse Doctors
+@app.get('/doctors/browse')
+def browse_doctors(keyword : str = Query(default=None),
+                   sort_by : str = Query(default="fee"),
+                   order : str = Query(default="asc"),
+                   page : int = Query(default=1, gt=0),
+                   limit : int = Query(default=4, gt=0)
+                   ):
+     
+    # Sort_by Validation
+    if sort_by not in ['fee', 'experience_years']:
+        raise HTTPException(status_code=400, detail="sort_by must be one of fee and experience_years")
+    
+    results = doctors.copy()
+    
+    # 1 - Filtering by search keyword
+    if keyword is not None:
+        results = [d for d in doctors if keyword.lower() in d['name'].lower() or keyword.lower() in d['specialization'].lower()]
+
+    if not results:
+        return {'message':'No results found for the given keyword'}
+    
+     # Page validation 
+    total_pages = math.ceil(len(doctors)/limit)
+    if page > total_pages:
+        raise HTTPException( status_code=400, detail="Invalid page number entered")
+    
+    # 2 - Filtering By sorting and order
+    reverse = False if order == "asc" else True
+    results = sorted(results, key = lambda r : r[sort_by], reverse=reverse)
+    
+    # 3 - Pagination for the filtered data
+    start = (page - 1)*limit
+    end = start + limit
+    
+    return {'keyword':keyword, 'sort_by':sort_by, 'order':order, 'page':page, 'limit':limit, 'total':len(results), 'total_pages':total_pages, 'doctors':results[start:end]}
+    
 # Q3
-@app.get('/doctors/{doctor_id}')
+@app.get('/doctors/{doctor_id}')    
 def get_doctor_id(doctor_id : int):
     for d in doctors:
         if d['id'] == doctor_id:
@@ -267,6 +336,12 @@ def delete_doctor(doctor_id : int):
     doctors.remove(doc)
     return {'message': 'doctor deleted sucessfully', 'deleted_doctor': doc}
     
+# Q15 - Display Active Appointments
+@app.get('/appointments/active')
+def active_appointments():
+    active_appointments = [a for a in appointments if a['status'] in ['scheduled', 'confirmed']]
+    return {'active_appointments': active_appointments}    
+    
 # Q14 - confirm appointment
 @app.post('/appointments/{appointment_id}/confirm')
 def confirm_appointment(appointment_id: int):
@@ -294,6 +369,12 @@ def cancle_appointment(appointment_id: int):
     
     return {'message':'appointment cancelled', 'appointment':appoint}
 
+# Q15 - Display Appointments by-doctor
+@app.get('/appointments/by-doctor/{doctor_id}')
+def by_doctor_appointments(doctor_id : int):
+     by_doctor_appointments = [a for a in appointments if a['doctor_id'] == doctor_id]
+     return {'total': len(by_doctor_appointments), 'appointments': by_doctor_appointments}
+
 # Q15 - Complete appointment
 @app.post('/appointments/{appointment_id}/complete')
 def complete_appointment(appointment_id: int):
@@ -307,15 +388,37 @@ def complete_appointment(appointment_id: int):
     appoint['status'] = 'completed'
     return {'message':'appointment completed', 'appointment':appoint}
 
-# Q15 - Display Active Appointments
-@app.get('/appointments/active')
-def active_appointments():
-    active_appointments = [a for a in appointments if a['status'] in ['scheduled', 'confirmed']]
-    return {'active_appointments': active_appointments}
+# Q19 - Searching Appointment
+@app.get('/appointments/search')
+def search_appointments(patient_name : str = Query(...)):
+    searched = [a for a in appointments if patient_name.lower() in a['patient'].lower()]
+    if not searched:
+        raise HTTPException( status_code=404, detail= "no results found on given patient_name")
+    return {'total_found': len(searched), 'results':searched}
 
-# Q15 - Display Appointments by-doctor
-@app.get('/appointments/by-doctor/{doctor_id}')
-def by_doctor_appointments(doctor_id : int):
-     by_doctor_appointments = [a for a in appointments if a['doctor_id'] == doctor_id]
-     return {'total': len(by_doctor_appointments), 'appointments': by_doctor_appointments}
-         
+# Q19 - Sorting Appointment
+@app.get('/appointments/sort')
+def sort_by(sort_by : str = Query(default="fee"),
+            order : str = Query(default="asc")):
+    if sort_by not in ['discounted_fee', 'date']:
+        raise HTTPException( status_code=400, detail="sort_by must be one of fee and date")
+    reverse = False if order == "asc" else True 
+    sorted_list = sorted(appointments, key = lambda appoint : appoint[sort_by], reverse=reverse)
+    return {'sort_by':sort_by, 'order':order, 'total':len(sorted_list),'appointments': sorted_list}
+
+# Q19 - Appointment Pagination
+@app.get('/appointments/page')
+def paging_appointment(page : int = Query(default=1, gt=0),
+                   limit : int = Query(default=3, gt=0)):
+    total_pages = math.ceil(len(appointments)/limit)
+    if page > total_pages:
+        raise HTTPException(status_code=400, detail="Invalid Page number")
+    start = (page-1)*limit
+    end = start+ limit
+    
+    
+    return {'page':page, 'limit':limit, 'appointments': appointments[start:end], 'total_pages':total_pages, 'total_items':len(appointments )}
+
+
+    
+    
